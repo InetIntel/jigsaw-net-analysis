@@ -21,8 +21,9 @@ import datetime
 import json
 import ssl
 import time
-from urllib.request import urlopen, Request
 from urllib.parse import urlencode, quote
+
+import urllib3
 
 import certifi
 import pandas as pd
@@ -40,16 +41,23 @@ _SSL_CONTEXT = ssl.create_default_context(cafile=certifi.where())
 class ApiTrafficRepository(model.TrafficRepository):
     """TrafficRepository that reads the traffic data from Google's Transparency Report."""
 
+    def __init__(self):
+        super().__init__()
+        self.httppool = urllib3.PoolManager()
+
     def _query_api(self, endpoint, params=None):
         query_url = "https://transparencyreport.google.com/transparencyreport/api/v3/traffic/" + \
             quote(endpoint)
+
+        headers = {
+            "User-Agent": "Jigsaw-Code/netanalysis",
+        }
+
         if params:
             query_url = query_url + "?" + urlencode(params)
         try:
-            request = Request(query_url)
-            request.add_header("User-Agent", "Jigsaw-Code/netanalysis")
-            with urlopen(request, context=_SSL_CONTEXT) as response:
-                return json.loads(response.read()[6:].decode("utf8"))
+            response = self.httppool.request('GET', query_url, headers=headers)
+            return json.loads(response.data[6:].decode("utf8"))
         except Exception as error:
             raise Exception("Failed to query url %s" % query_url, error)
 
@@ -76,6 +84,8 @@ class ApiTrafficRepository(model.TrafficRepository):
             ("region", region_code)]
         response_proto = self._query_api("fraction", params)
         entry_list_proto = response_proto[0][1]
+        if entry_list_proto is None:
+            return pd.Series(dtype="object")
         for entry_proto in entry_list_proto:
             timestamp = datetime.datetime.utcfromtimestamp(
                 entry_proto[0] / 1000)
